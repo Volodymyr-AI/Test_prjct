@@ -24,8 +24,16 @@ try
     var builder = Host.CreateApplicationBuilder(args);
 
     // === Serilog ===
-    builder.Services.AddSerilog((_, lc) => lc
-        .ReadFrom.Configuration(builder.Configuration));
+    builder.Services.AddSerilog((services, lc) => lc
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(outputTemplate:
+            "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        .WriteTo.File(
+            path: "logs/scraper-.log",
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 7));
 
     // === Options ===
     builder.Services

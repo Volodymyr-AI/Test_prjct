@@ -200,60 +200,70 @@ public sealed partial class PlaywrightScraperService : IScraperService
     private static async Task<List<ScrapedItem>> ExtractFromDomAsync(IPage page)
     {
         const string script = """
-            (() => {
-                const items = [];
-                const seen  = new Set();
-                const selectors = [
-                    'li[class*="stream-item"]',
-                    'div[class*="stream-item"]',
-                    '[data-testid="stream-item"]',
-                    'article'
-                ];
+                              (() => {
+                                  const items = [];
+                                  const seen  = new Set();
+                                  const selectors = [
+                                      'li[class*="stream-item"]',
+                                      'div[class*="stream-item"]',
+                                      '[data-testid="stream-item"]',
+                                      'article'
+                                  ];
 
-                for (const sel of selectors) {
-                    document.querySelectorAll(sel).forEach(el => {
-                        const anchor  = el.querySelector('a[href*="/news/"], a[href^="https"]');
-                        const title   = el.querySelector('h3, h2, [class*="title"]');
-                        const summary = el.querySelector('p, [class*="summary"]');
-                        const source  = el.querySelector('[class*="provider"], cite');
-                        const time    = el.querySelector('time');
+                                  for (const sel of selectors) {
+                                      document.querySelectorAll(sel).forEach(el => {
+                                          const anchor  = el.querySelector('a[href*="/news/"], a[href^="https"]');
+                                          const title   = el.querySelector('h3, h2, [class*="title"]');
+                                          const summary = el.querySelector('p, [class*="summary"]');
+                                          const source  = el.querySelector('[class*="provider"], cite');
+                                          const time    = el.querySelector('time');
 
-                        if (!anchor || !title) return;
+                                          if (!anchor || !title) return;
 
-                        const url = anchor.href;
-                        if (!url || seen.has(url)) return;
-                        seen.add(url);
+                                          const url = anchor.href;
+                                          if (!url || seen.has(url)) return;
+                                          seen.add(url);
 
-                        items.push({
-                            url,
-                            title:       title.innerText?.trim()   ?? '',
-                            summary:     summary?.innerText?.trim() ?? null,
-                            source:      source?.innerText?.trim()  ?? null,
-                            publishedAt: time?.getAttribute('datetime') ?? null
-                        });
-                    });
-                }
-                return items;
-            })()
-            """;
+                                          items.push({
+                                              url:         url,
+                                              title:       title.innerText?.trim()    || '',
+                                              summary:     summary?.innerText?.trim() || '',
+                                              source:      source?.innerText?.trim()  || '',
+                                              publishedAt: time?.getAttribute('datetime') || ''
+                                          });
+                                      });
+                                  }
 
-        var raw = await page.EvaluateAsync<List<Dictionary<string, object?>>>(script);
+                                  return JSON.stringify(items);
+                              })()
+                              """;
+
+        var json = await page.EvaluateAsync<string>(script);
+
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        var raw = JsonSerializer.Deserialize<List<RawScrapedItem>>(json, JsonOpts);
+
+        if (raw is null)
+            return [];
 
         return raw
-            .Where(r => !string.IsNullOrWhiteSpace(r["url"]?.ToString())
-                     && !string.IsNullOrWhiteSpace(r["title"]?.ToString()))
+            .Where(r => !string.IsNullOrWhiteSpace(r.Url)
+                        && !string.IsNullOrWhiteSpace(r.Title))
             .Select(r =>
             {
                 DateTimeOffset? publishedAt = null;
 
-                if (DateTimeOffset.TryParse(r["publishedAt"]?.ToString(), out var dt))
+                if (!string.IsNullOrWhiteSpace(r.PublishedAt)
+                    && DateTimeOffset.TryParse(r.PublishedAt, out var dt))
                     publishedAt = dt;
 
                 return new ScrapedItem(
-                    Url:         r["url"]!.ToString()!,
-                    Title:       r["title"]!.ToString()!,
-                    Summary:     r["summary"]?.ToString(),
-                    Source:      r["source"]?.ToString(),
+                    Url:         r.Url!,
+                    Title:       r.Title!,
+                    Summary:     string.IsNullOrWhiteSpace(r.Summary)     ? null : r.Summary,
+                    Source:      string.IsNullOrWhiteSpace(r.Source)      ? null : r.Source,
                     PublishedAt: publishedAt);
             })
             .ToList();

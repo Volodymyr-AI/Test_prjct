@@ -39,7 +39,8 @@ public sealed class ClickHouseArticleRepository(string connectionString, ILogger
             a.PublishedAt?.UtcDateTime,
             a.ScrapedAt.UtcDateTime
         });
-
+        
+        await bulkCopy.InitAsync();
         await bulkCopy.WriteToServerAsync(rows, ct);
 
         logger.LogInformation(

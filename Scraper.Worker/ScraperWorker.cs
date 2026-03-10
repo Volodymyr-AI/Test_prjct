@@ -22,8 +22,6 @@ public sealed class ScraperWorker : BackgroundService
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("ScraperWorker.ExecuteAsync started");
-        await RunSafeAsync(stoppingToken);
         _logger.LogInformation(
             "ScraperWorker started — interval: {Interval}",
             _options.Interval);
