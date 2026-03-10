@@ -44,7 +44,8 @@ try
 
     // === Install Playwright Chromium if needed ===
     Log.Information("Ensuring Playwright Chromium is installed…");
-    Microsoft.Playwright.Program.Main(["install", "chromium", "--with-deps"]);
+    var exitCode = Microsoft.Playwright.Program.Main(["install", "chromium"]);
+    Log.Information("Playwright install exit code: {Code}", exitCode);
 
     var host = builder.Build();
     await host.RunAsync();

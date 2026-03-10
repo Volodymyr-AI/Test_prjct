@@ -22,6 +22,8 @@ public sealed class ScraperWorker : BackgroundService
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("ScraperWorker.ExecuteAsync started");
+        await RunSafeAsync(stoppingToken);
         _logger.LogInformation(
             "ScraperWorker started — interval: {Interval}",
             _options.Interval);
@@ -37,14 +39,18 @@ public sealed class ScraperWorker : BackgroundService
     
     private async Task RunSafeAsync(CancellationToken ct)
     {
+        
         // New scope per run — Scoped services (repository, cache) resolved fresh
+        _logger.LogInformation("RunSafeAsync called");
         await using var scope = _scopeFactory.CreateAsyncScope();
 
         try
         {
+            _logger.LogInformation("Resolving orchestrator...");
             var orchestrator = scope.ServiceProvider
                 .GetRequiredService<ScrapingOrchestrator>();
 
+            _logger.LogInformation("Starting orchestrator.RunAsync...");
             await orchestrator.RunAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
