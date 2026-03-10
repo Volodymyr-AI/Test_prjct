@@ -1,6 +1,10 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "data", "data", "{33D9945F-599F-46DA-B62F-A2E0D4E9CF0E}"
+	ProjectSection(SolutionItems) = preProject
+		README.md = README.md
+		SCALABILITY.md = SCALABILITY.md
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{257137DF-5386-4AAB-9513-46C02674EF57}"
 EndProject
