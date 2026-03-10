@@ -7,6 +7,7 @@ using Scraper.Core.Interfaces;
 using Scraper.Core.Models;
 using Scraper.Scraping.Models;
 using Scraper.Scraping.Options;
+using Scraper.Scraping.Scripts;
 
 namespace Scraper.Scraping.Services;
 
@@ -36,7 +37,8 @@ public sealed partial class PlaywrightScraperService : IScraperService
     
     // Matches Yahoo Finance internal stream/pagination API endpoints
     [GeneratedRegex(
-        @"(query\d+\.finance\.yahoo\.com|finance\.yahoo\.com).*(stream|pagination|news)",
+        @"finance\.yahoo\.com/xhr/v\d+/finance/(news|stream)|" +
+               @"query\d+\.finance\.yahoo\.com/v\d+/finance/(news|stream)",
         RegexOptions.IgnoreCase)]
     private static partial Regex YahooApiPattern();
 
@@ -130,18 +132,21 @@ public sealed partial class PlaywrightScraperService : IScraperService
             }
 
             // 3. Intercept Yahoo API XHR/Fetch responses
-            if (resourceType is "xhr" or "fetch" && YahooApiPattern().IsMatch(url))
+            if (resourceType is "xhr" or "fetch")
             {
-                var response = await route.FetchAsync();
-                var body     = await response.TextAsync();
+                _logger.LogDebug("XHR/Fetch request: {Url}", url);
 
-                _ = Task.Run(() => TryParseApiResponse(url, body));
-
-                await route.FulfillAsync(new RouteFulfillOptions
+                if (YahooApiPattern().IsMatch(url))
                 {
-                    Response = response
-                });
-                return;
+                    _logger.LogInformation("Intercepting Yahoo API: {Url}", url);
+                    var response = await route.FetchAsync();
+                    var body = await response.TextAsync();
+                    
+                    _ = Task.Run(() => TryParseApiResponse(url, body));
+                    
+                    await route.FulfillAsync(new RouteFulfillOptions { Response = response });
+                    return;
+                }
             }
 
             await route.ContinueAsync();
@@ -162,12 +167,7 @@ public sealed partial class PlaywrightScraperService : IScraperService
             await page.EvaluateAsync("window.scrollTo(0, document.body.scrollHeight)");
             await page.WaitForTimeoutAsync(_options.ScrollDelayMs);
 
-            var currentCount = await page.EvaluateAsync<int>(
-                "document.querySelectorAll(" +
-                "'li[class*=\"stream-item\"]," +
-                "div[class*=\"stream-item\"]," +
-                "[data-testid=\"stream-item\"]'" +
-                ").length");
+            var currentCount = await page.EvaluateAsync<int>(YahooFinanceScripts.CountStreamItems);
 
             _logger.LogDebug(
                 "Scroll {Iter}/{Max} — {Count} articles in DOM",
@@ -193,52 +193,22 @@ public sealed partial class PlaywrightScraperService : IScraperService
 
             previousCount = currentCount;
         }
+        
+        var debugHtml = await page.EvaluateAsync<string>("""
+                                                         (() => {
+                                                             const el = document.querySelector('li[class*="stream-item"], div[class*="stream-item"], [data-testid="stream-item"], article');
+                                                             return el ? el.innerHTML.substring(0, 5000) : 'NO ELEMENT FOUND';
+                                                         })()
+                                                         """);
+
+        _logger.LogInformation("DEBUG HTML: {Html}", debugHtml);
 
         return await ExtractFromDomAsync(page);
     }
 
     private static async Task<List<ScrapedItem>> ExtractFromDomAsync(IPage page)
     {
-        const string script = """
-                              (() => {
-                                  const items = [];
-                                  const seen  = new Set();
-                                  const selectors = [
-                                      'li[class*="stream-item"]',
-                                      'div[class*="stream-item"]',
-                                      '[data-testid="stream-item"]',
-                                      'article'
-                                  ];
-
-                                  for (const sel of selectors) {
-                                      document.querySelectorAll(sel).forEach(el => {
-                                          const anchor  = el.querySelector('a[href*="/news/"], a[href^="https"]');
-                                          const title   = el.querySelector('h3, h2, [class*="title"]');
-                                          const summary = el.querySelector('p, [class*="summary"]');
-                                          const source  = el.querySelector('[class*="provider"], cite');
-                                          const time    = el.querySelector('time');
-
-                                          if (!anchor || !title) return;
-
-                                          const url = anchor.href;
-                                          if (!url || seen.has(url)) return;
-                                          seen.add(url);
-
-                                          items.push({
-                                              url:         url,
-                                              title:       title.innerText?.trim()    || '',
-                                              summary:     summary?.innerText?.trim() || '',
-                                              source:      source?.innerText?.trim()  || '',
-                                              publishedAt: time?.getAttribute('datetime') || ''
-                                          });
-                                      });
-                                  }
-
-                                  return JSON.stringify(items);
-                              })()
-                              """;
-
-        var json = await page.EvaluateAsync<string>(script);
+        var json = await page.EvaluateAsync<string>(YahooFinanceScripts.ExtractArticles);
 
         if (string.IsNullOrWhiteSpace(json))
             return [];
@@ -253,20 +223,54 @@ public sealed partial class PlaywrightScraperService : IScraperService
                         && !string.IsNullOrWhiteSpace(r.Title))
             .Select(r =>
             {
-                DateTimeOffset? publishedAt = null;
-
-                if (!string.IsNullOrWhiteSpace(r.PublishedAt)
-                    && DateTimeOffset.TryParse(r.PublishedAt, out var dt))
-                    publishedAt = dt;
+                var publishedAt = ParseRelativeTime(r.PublishedAt);
 
                 return new ScrapedItem(
                     Url:         r.Url!,
                     Title:       r.Title!,
-                    Summary:     string.IsNullOrWhiteSpace(r.Summary)     ? null : r.Summary,
+                    Summary:     null, // can be added logic for summarizing data shortly 
                     Source:      string.IsNullOrWhiteSpace(r.Source)      ? null : r.Source,
                     PublishedAt: publishedAt);
             })
             .ToList();
+    }
+
+    private static DateTimeOffset? ParseRelativeTime(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        
+        raw = raw.Trim().ToLowerInvariant();
+        var now = DateTimeOffset.UtcNow;
+
+        try
+        {
+            if (raw.EndsWith("m ago"))
+            {
+                var minutes = int.Parse(raw.Replace("m ago", "").Trim());
+                return now.AddMinutes(-minutes);
+            }
+
+            if (raw.EndsWith("h ago"))
+            {
+                var hours = int.Parse(raw.Replace("h ago", "").Trim());
+                return now.AddHours(-hours);
+            }
+
+            if (raw.EndsWith("d ago"))
+            {
+                var days = int.Parse(raw.Replace("d ago", "").Trim());
+                return now.AddDays(-days);
+            }
+
+            if (DateTimeOffset.TryParse(raw, out var dt))
+                return dt;
+        }
+        catch
+        {
+            /*ignore*/
+        }
+        
+        return DateTimeOffset.MinValue;
     }
 
     // === XHR interception ===

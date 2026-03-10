@@ -37,6 +37,7 @@ public sealed class ScraperOptions
         "adsymptotic.com",
         "ads.yahoo.com",
         "analytics.yahoo.com",
-        "beacon.yahoo.com"
+        "beacon.yahoo.com",
+        "finance.yahoo.com/xhr/beacon"
     ];
 }
