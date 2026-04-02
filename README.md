@@ -1,4 +1,4 @@
-# Softoria Scraper
+# Yahoo Scraper
 
 Yahoo Finance Latest News scraper built with **.NET 10 Worker Service**, **Playwright**, **ClickHouse**, and **Redis**.
 
